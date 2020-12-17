@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>葵ちゃんリップシンク</title>
+</head>
+<body>
+  <div id="app">
+    <!-- 葵ちゃんの表示 -->
+    <div class="character">
+      <img src="./body.png" alt="">
+      <img class="mouse" id="mouse" src='./mouse_close.png' alt="">
+      <img class="face" src="./face_normal.png">
+    </div>
+    
+    <div class="control-panel">
+      <button onclick="playVoice('./greeting.wav')">ご挨拶</button>
+      <button onclick="playVoice('./greeting2.wav')">ご挨拶2</button>
+    </div>
+  </div>
+</body>
+</html>
+
+<style>
+  .character {
+    position: relative;
+  }
+  img {
+    position: absolute;
+    top: 0;
+    left: 0;
+  }
+  img.mouse, img.face {
+    z-index: 1;
+  }
+  .control-panel {
+    position: relative;
+    z-index: 2;
+  }
+</style>
+
+<script>
+  let ctx = null // AudioContext: Nodeの作成、音声のデコードの制御などを行う
+  let audioSrc = null // AudioBufferSourceNode: 音声入力ノード
+  let analyser = null // AnalyserNode: 音声解析ノード
+  let sampleInterval = null
+  let prevSpec = 0 // 前回のサンプリングで取得したスペクトルの配列
+  const mouseElement = document.getElementById('mouse')
+  const buttons = document.querySelectorAll('button')
+
+  /* 音声データをAudioBufferに変換 */
+  preparedBuffer = async (voice_path) => {
+    ctx = new AudioContext()
+    const res = await fetch(voice_path)
+    const arrayBuffer = await res.arrayBuffer()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+
+    return audioBuffer
+  }
+
+  /* 入力ノード、Analyserノードを生成し、出力層に接続 */
+  buildNodes = (audioBuffer) => {
+    audioSrc = new AudioBufferSourceNode(ctx, { buffer: audioBuffer })
+    analyser = new AnalyserNode(ctx)
+    analyser.fftSize = 512
+    audioSrc.connect(analyser).connect(ctx.destination)
+  }
+
+  /* スペクトルをもとにリップシンクを行う */
+  syncLip = (spectrums) => {
+    let totalSpec = 0
+    const totalSpectrum = spectrums.reduce(function(a, x) { return a + x })
+    if (totalSpectrum > prevSpec) {
+      mouseElement.src = './mouse_open.png'
+    } else if (prevSpec - totalSpectrum < 1000) {
+      mouseElement.src = './mouse_open_light.png'
+    } else {
+      mouseElement.src = './mouse_close.png'
+    }
+
+      prevSpec = totalSpectrum
+    }
+
+    /* 音声再生処理 */
+    playVoice = async (voice_path) => {
+      // 音声再生中はボタンを無効化し、2重で再生できないようにする
+      buttons.forEach(button => {
+        button.disabled = true
+    })
+
+    const audioBuffer = await preparedBuffer(voice_path) // audioBuffer取得
+    buildNodes(audioBuffer) // 入力、解析ノード作成
+    audioSrc.start() // 音声再生開始
+
+    // 50ms毎に音声のサンプリング→解析→リップシンクを行う
+    sampleInterval = setInterval(() => {
+      let spectrums = new Uint8Array(analyser.fftSize)
+      analyser.getByteFrequencyData(spectrums)
+      syncLip(spectrums)
+    }, 50)
+
+    // 音声終了時のコールバック： リソースの開放、無効化していたボタンを有効化する
+    audioSrc.onended = () => {
+      clearInterval(sampleInterval)
+      audioSrc = null
+      ctx.close()
+      ctx = null
+      prevSpec = 0
+      buttons.forEach(button => {
+        button.disabled = false
+      })
+    }
+  }
+</script>
